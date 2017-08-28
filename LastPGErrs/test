@@ -1,0 +1,147 @@
+#!/bin/sh
+#: Title       : Lastpostgreserrs
+#: Date        : 2017-08-24
+#: Author      : "Kybernetes" <correodelkybernetes@gmail.com>
+#: Version     : 1.0.0
+#: Description : Dash script file
+#:             : Retrieves last postgreSQL errors since last execution
+#: Options     : N/A
+##
+## -- Required for execution -------------------------------------------------------------------------------------------
+type grep >/dev/null || exit 1
+type date >/dev/null || exit 1
+type tail >/dev/null || exit 1
+type mkfifo >/dev/null || exit 1
+##
+## -- Globals ----------------------------------------------------------------------------------------------------------
+_CNF_MATCHES="FATAL|ERROR"
+_CNF_LCOUNTF="/home/scom/lastcount.log"
+_CNF_CCOUNTD="/var/lib/pgsql/9.4/data/pg_log/prueba"
+_CNF_NOWFRMT="%F"
+_CNF_CCOUNTP="prueba-"
+_CNF_CCOUNTS=".log"
+##
+## -- Auxiliary functions ----------------------------------------------------------------------------------------------
+stdmsg() {
+    printf "%s\n" "$@"
+}
+errmsg() {
+    stdMsg "Error! $@" >&2
+}
+##
+## -- Core functions ---------------------------------------------------------------------------------------------------
+_NOW=
+getNow() { #@ DESCRIPTION:
+           #@ USAGE:
+    if ! _NOW=$(date +'%F'); then
+        errmsg "Failed to call date cmd"
+        return 1
+    fi
+    eval "$1=\"\$_NOW\"" ## /!\ - $1 must be a valid shell name /!\
+}
+_LCOUNT=
+getLcount() { #@ DESCRIPTION:
+              #@ USAGE:
+    if ! read _LCOUNT <"$2"; then
+        errmsg "Failed to read file $2"
+        if [ ! -e "$2" ]; then
+            stdmsg "File not found"
+        elif [ ! -r "$2" ]; then
+            stdmsg "Read permission disabled"
+        elif [ ! -s "$2" ]; then
+            stdmsg "File is empty"
+        fi
+        return 1
+    fi
+    eval "$1=\"\$_LCOUNT\"" ## /!\ - $1 must be a valid shell name /!\
+}
+_CCOUNT=
+getCcount() { #@ DESCRIPTION:
+              #@ USAGE:
+    _CCOUNT=$(grep -cE "$3" "$2")
+    case $? in
+        2)
+            errmsg "Failed to filter $2 file"
+            if [ ! -e "$2" ]; then
+                stdmsg "File not found"
+            elif [ ! -r "$2" ]; then
+                stdmsg "Read permission disabled"
+            fi
+            return 1 ;;
+        1) _CCOUNT=0 ;; ## If no matches found, grep will exit with 1
+    esac
+    eval "$1=\"\$_CCOUNT\"" ## /!\ - $1 must be a valid shell name /!\
+}
+_LERRS=
+getLerrs() {
+    
+}
+setLcount() { #@ DESCRIPTION:
+              #@ USAGE:
+    if ! printf "%d\n" "$2" >"$1"; then
+        errmsg "Failed to write file $1"
+        if [ ! -e "${1%/*}" ]; then
+            stdmsg "The parent dir was not found"
+        elif [ ! -x "${1%/*}" -a -w "${1%/*}" ]; then
+            stdmsg "Execute/write permission on parent dir disabled"
+        fi
+        return 1
+    fi
+}
+##
+## -- MAIN -------------------------------------------------------------------------------------------------------------
+main() {
+    local now matches lcountf lcount ccountf
+    shift $#
+    ##
+    ## Configure current instance
+    if ! getNow now; then
+        errmsg "Failed to get current date"
+        return 1
+    fi
+    matches=$_CNF_MATCHES
+    lcountf=$_CNF_LCOUNTF
+    ccountf="$_CNF_CCOUNTD/$_CNF_CCOUNTP$now$_CNF_CCOUNTS"
+    ##
+    ## Get last matches count
+    if ! getLcount lcount "$lcountf"; then
+        printf "Error! %s\n" "Unable to get last matching lines count"
+        return 2
+    fi
+    ##
+    ## Check last count value
+    case $lcount in
+        "")
+            errmsg "Empty count read from $lcountf"
+            return 3 ;;
+        *[!0-9]*)
+            errmsg "Non numeric value read from $lcountf"
+            return 3 ;;
+    esac
+    ##
+    ## Get current count    
+    if ! getCcount ccount "$ccountf" "$matches"; then
+        errmsg  "Unable to get current matching lines count"
+        return 4
+    fi
+    ##
+    ## Compare matching words w/last execution
+    if [ $lcount -lt $ccount ]; then
+        printf "%d\n" "1"
+        if ! getLerrs "$ccountf" "$matches"; then
+            
+            return  5            
+        fi
+    else
+        printf "%d\n" "0"
+    fi
+    ## 
+    ## Refresh last count
+    if ! setLcount "$lcountf" "$ccount"; then
+        errmsg "Failed to refresh last matching lines count"
+        return 6
+    fi    
+}
+##
+## -- RUN! -------------------------------------------------------------------------------------------------------------
+main "$@"

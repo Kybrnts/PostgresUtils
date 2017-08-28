@@ -1,0 +1,149 @@
+#!/bin/sh
+#: Title       : Lastpostgreserrs
+#: Date        : 2017-08-24
+#: Author      : "Kybernetes" <correodelkybernetes@gmail.com>
+#: Version     : 1.0.0
+#: Description : Dash script file
+#:             : Retrieves last postgreSQL errors since last execution
+#: Options     : N/A
+##
+## -- Required for execution -------------------------------------------------------------------------------------------
+type grep >/dev/null || exit 1
+type date >/dev/null || exit 1
+type tail >/dev/null || exit 1
+type lsof >/dev/null || exit 1
+##
+## -- Globals ----------------------------------------------------------------------------------------------------------
+##
+## -- Globals ----------------------------------------------------------------------------------------------------------
+PGVERS=9.5                                               ## PostgreSQL version (try to be version agnostic)
+PGDATA=/var/lib/pgsql/$PGVERS/data                       ## PostgreSQL Databases container
+PGLOGS="$PGDATA/pg_log"                                  ## PostgreSQL log files container
+_CNF_MATCHES="FATAL|ERROR"                               ## Error patterns to match in log files
+_CNF_LSTLOGF="/home/monitor/lstpglog.log"                ## Last error count from log file
+_CNF_LSTCNTF="/home/monitor/lstpgcount.log"              ## Last used log file
+_CNF_NOWFRMT="%F"                                        ## Date's output format
+_CNF_LOGFPFX=""                                          ## Fixed PostgreSQL logfile prefix
+_CNF_LOGFSFX=".log"                                      ## Fixed PostgreSQL logfile suffix
+##
+## -- Auxiliary functions ----------------------------------------------------------------------------------------------
+stdmsg() { #@ DESCRIPTION: Print messages to STDOUT
+    #@ USAGE: stdmsg [ MSG ... ]
+    [ "${1+X}" = X ] && printf "%s\n" "$@"
+}
+errmsg() { #@ DESCRIPTION: Print messages to STDERR prefixed by an error stamp
+    #@ USAGE: stderr [ MSG ... ]
+    stdmsg ${1+"Error! $@"} >&2
+}
+valerc() { #@ DESCRIPTION: Checks if $1 contains a valid error count
+           #@ USAGE: stderr [ MSG ... ]
+    case $1 in
+        "") return 1 ;;
+        *[!0-9]*) return 2 ;;
+    esac
+}
+_RDLNF=
+rdLnF() { #@ DESCRIPTION: Reads single line from $2 file in $1 name. At least one line is expected from file, where an
+          #@              an exit status of 0 will be returned to calling env.
+          #@ USAGE: readLnF NAME [ MSG .. ]
+    ## Try to read one line of text into global
+    if ! read _RDLNF <"$2"; then ## If we failed to do so
+        if [ ! -e "$2" ]; then   ## Is so is it because the file does not exist?
+            return 1
+        elif [ ! -r "$2" ]; then ## Or may be because file is not readable?
+            return 2
+        elif [ ! -s "$2" ]; then ## Or because file does not have a single line (read returns >0 when EOF is reached)
+            return 3
+        else                     ## This is unexpected
+            return 4
+        fi
+    fi
+    ## Assign global's value to referenced variable
+    eval "$1=\"\$_RDLNF\"" ## /!\ - $1 must be a valid shell name /!\
+}
+##
+## -- Core functions ---------------------------------------------------------------------------------------------------
+_NOW=
+getNow() { #@ DESCRIPTION:
+           #@ USAGE:
+    if ! _NOW=$(date +'%F'); then
+
+        return 1
+    fi
+    eval "$1=\"\$_NOW\"" ## /!\ - $1 must be a valid shell name /!\
+}
+_LCOUNT=
+getLcount() { #@ DESCRIPTION:
+              #@ USAGE:
+    
+}
+
+##
+## -- MAIN -------------------------------------------------------------------------------------------------------------
+main() {
+    local
+    set --    
+    ##
+    ## Get current date stamp
+    if ! getNow now; then
+        errmsg "Failed to get current date"
+        return 1
+    fi
+
+
+    
+    ##
+    ## Read last log file name from file
+    if ! getCurrLog lastog "$l_logf"; then
+
+        return 2
+    fi    
+    ##
+    ## Find current log file's NAME being used by process
+    if ! getCurrLog currlog "$logsdir"; then
+
+        return 3
+    fi
+    if [ "$currlog" != "$lastlog" ]; then
+        ##
+        ## Set last matches count trivialy, ignoring file
+        lcount=0
+    else
+        ##
+        ## Get last matches count from file
+        if ! getLcount lcount "$lcountf"; then
+            printf "Error! %s\n" "Unable to get last matching lines count"
+            return 4
+        fi
+        ##
+        ## Check last count value
+        case $lcount in
+            "")
+                errmsg "Empty count read from $lcountf"
+                return 4 ;;
+            *[!0-9]*)
+                errmsg "Non numeric value read from $lcountf"
+                return 4 ;;
+        esac
+    fi
+    ##
+    ## Compare matching words w/last execution
+    if [ $lcount -lt $ccount ]; then
+        printf "%d\n" "1"
+        if ! getLerrs "$ccountf" "$matches"; then
+            
+            return  5            
+        fi
+    else
+        printf "%d\n" "0"
+    fi
+    ## 
+    ## Refresh last count
+    if ! setLcount "$lcountf" "$ccount"; then
+        errmsg "Failed to refresh last matching lines count"
+        return 6
+    fi    
+}
+##
+## -- RUN! -------------------------------------------------------------------------------------------------------------
+main "$@"
