@@ -16,6 +16,7 @@ type lsof >/dev/null || exit 1
 ## -- Globals ----------------------------------------------------------------------------------------------------------
 ##
 ## -- Globals ----------------------------------------------------------------------------------------------------------
+PGUSER=postgres                                          ## PostgreSQL's system user
 PGVERS=9.5                                               ## PostgreSQL version (try to be version agnostic)
 PGDATA=/var/lib/pgsql/$PGVERS/data                       ## PostgreSQL Databases container
 PGLOGS="$PGDATA/pg_log"                                  ## PostgreSQL log files container
@@ -63,15 +64,6 @@ rdLnF() { #@ DESCRIPTION: Reads single line from $2 file in $1 name. At least on
 }
 ##
 ## -- Core functions ---------------------------------------------------------------------------------------------------
-_NOW=
-getNow() { #@ DESCRIPTION:
-           #@ USAGE:
-    if ! _NOW=$(date +'%F'); then
-
-        return 1
-    fi
-    eval "$1=\"\$_NOW\"" ## /!\ - $1 must be a valid shell name /!\
-}
 _LCOUNT=
 getLcount() { #@ DESCRIPTION:
               #@ USAGE:
@@ -81,29 +73,24 @@ getLcount() { #@ DESCRIPTION:
 ##
 ## -- MAIN -------------------------------------------------------------------------------------------------------------
 main() {
-    local
-    set --    
+    local lastlog          
+    set --
     ##
-    ## Get current date stamp
-    if ! getNow now; then
-        errmsg "Failed to get current date"
-        return 1
-    fi
+    ##
+    
 
 
     
     ##
-    ## Read last log file name from file
-    if ! getCurrLog lastog "$l_logf"; then
+    ## Read last log file name from file into "lstlogf" variable    
 
-        return 2
-    fi    
     ##
-    ## Find current log file's NAME being used by process
-    if ! getCurrLog currlog "$logsdir"; then
+    ## Find current log file's NAME being used by process into "crrlogf" variable
 
-        return 3
-    fi
+    ##
+    ## Compare lstlogf w/crrlogf
+    ## If they are the same, then 
+    
     if [ "$currlog" != "$lastlog" ]; then
         ##
         ## Set last matches count trivialy, ignoring file
