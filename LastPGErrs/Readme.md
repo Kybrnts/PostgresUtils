@@ -21,17 +21,17 @@ of the last log file used to find matching messages.
 Workflow
 --------
 01. Make sure that current user is postgres, otherwise finish w/errors;
-02. Find the PID of PostgreSQL's Logging Collector. If it is not running finish w/errors;
-03. Then read the last log filename used by the Logging Collector from file. If this fails, finish w/errors;
-04. Also read the last number of matching lines found during previous execution from file, finishing with
+02. Then read the last log filename used by the Logging Collector from file. If this fails, finish w/errors;
+03. Also read the last number of matching lines found during previous execution from file, finishing with
     errors when not possible;
-05. Continue by counting the current number matches found in previous log file. If this is not possible, throw a warning
-    explaining that some errors might be lost from previous log rotation and continue w/step 08;
-06. Compare the current number of errors in previous log file w/the previous number from step 04. If the difference "d"
+04. Continue by counting the current number matches found in previous log file. If this is not possible, throw a warning
+    explaining that some errors might be lost from previous log rotation and continue w/step 07;
+05. Compare the current number of errors in previous log file w/the previous number from step 03. If the difference "d"
     is >0 then display the last "d" error messages from that file or finish w/errors if that's not possible;
-07. Update the last number of matches found in previous execution in file adding previous "d" to its contained number;
+06. Update the last number of matches found in previous execution in file adding previous "d" to its contained number;
+07. Find the PID of PostgreSQL's Logging Collector. If it is not running finish w/errors;
 08. Get the current log filename used by Logging Collector. If it is not possible, finish w/errors;
-09. Compare the currently used log file w/that read in step 03. If it is the same finish;
+09. Compare the currently used log file w/that read in step 02. If it is the same finish;
 10. Now that Logging Collector is using a new log file, Update last the last log filename used by the Logging Collector.
     If this fails, finish w/errors;
 11. Also count all matching lines found in new log file, finishing w/errors if that fails;
