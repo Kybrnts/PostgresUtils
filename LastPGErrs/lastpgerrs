@@ -73,64 +73,20 @@ getLcount() { #@ DESCRIPTION:
 ##
 ## -- MAIN -------------------------------------------------------------------------------------------------------------
 main() {
-    local lastlog          
     set --
     ##
+    ## 01. Make sure that current user is postgres, otherwise finish w/errors;
+
     ##
+    ## 02. Read the last log filename used by the Logging Collector from file. If fails, finish w/errors;
+
+    ##
+    ## 03. Read last number of matches found during previous execution from file, finish w/errors if fails;
+
+    ##
+    ## 04. Count current number of matches in previous log file
     
-
-
-    
-    ##
-    ## Read last log file name from file into "lstlogf" variable    
-
-    ##
-    ## Find current log file's NAME being used by process into "crrlogf" variable
-
-    ##
-    ## Compare lstlogf w/crrlogf
-    ## If they are the same, then 
-    
-    if [ "$currlog" != "$lastlog" ]; then
-        ##
-        ## Set last matches count trivialy, ignoring file
-        lcount=0
-    else
-        ##
-        ## Get last matches count from file
-        if ! getLcount lcount "$lcountf"; then
-            printf "Error! %s\n" "Unable to get last matching lines count"
-            return 4
-        fi
-        ##
-        ## Check last count value
-        case $lcount in
-            "")
-                errmsg "Empty count read from $lcountf"
-                return 4 ;;
-            *[!0-9]*)
-                errmsg "Non numeric value read from $lcountf"
-                return 4 ;;
-        esac
-    fi
-    ##
-    ## Compare matching words w/last execution
-    if [ $lcount -lt $ccount ]; then
-        printf "%d\n" "1"
-        if ! getLerrs "$ccountf" "$matches"; then
-            
-            return  5            
-        fi
-    else
-        printf "%d\n" "0"
-    fi
-    ## 
-    ## Refresh last count
-    if ! setLcount "$lcountf" "$ccount"; then
-        errmsg "Failed to refresh last matching lines count"
-        return 6
-    fi    
-}
+ }
 ##
 ## -- RUN! -------------------------------------------------------------------------------------------------------------
 main "$@"
