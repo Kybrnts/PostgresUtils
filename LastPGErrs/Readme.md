@@ -20,6 +20,10 @@ of the last log file used to find matching messages.
 
 Workflow
 --------
+Below Workflow makes several assumptions, which include the capability of finding which files within a directory are in
+use by a process given its ID. This is usually achieved by a wise use of either the lsof or fuser acilities, or by
+listing the contents of /proc/$PID/fd. By doing this, we avoid using dates and timestamps for the search.
+
 01. Make sure that current user is postgres, otherwise finish w/errors;
 02. Then read the last log filename used by the Logging Collector from file. If this fails because file is empty or does
     not exists, then go to step 07. Otherwise finish w/errors;
@@ -61,3 +65,10 @@ Installation
 02. Set owner:group as root:postgres for script's file;
 03. Set mode as 750 for script's file;
 04. Allow your monitor user to run the script as postgres;
+
+Authors
+-------
+Written by :  Kybernetes <correodelkybernetes@gmail.com>;
+Reviewed by:  shd128 (https://github.com/shd128).
+         
+

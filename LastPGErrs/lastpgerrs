@@ -1,7 +1,8 @@
 #!/bin/sh
 #: Title       : Lastpostgreserrs
 #: Date        : 2017-08-24
-#: Author      : "Kybernetes" <correodelkybernetes@gmail.com>
+#: Authors     : Written by : "Kybernetes" <correodelkybernetes@gmail.com>
+#:             : Reviewed by:  shd128 (https://github.com/shd128)
 #: Version     : 1.0.0
 #: Description : Dash script file
 #:             : Retrieves last postgreSQL errors since last execution
@@ -85,6 +86,9 @@ main() {
 
     ##
     ## 04. Count current number of matches in previous log file
+
+    ##
+    ##
     
  }
 ##
