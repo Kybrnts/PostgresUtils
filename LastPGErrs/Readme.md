@@ -13,10 +13,10 @@ For more information on the subject, please visit below links:
 * https://www.openscg.com/2016/05/helpful-postgresql-logging-and-defaults/
 
 LastPGErrs will therefore keep track of the number of messages that matched against the given pattern in its previous
-execution and decide if there are new matching ones by comparing that number with the number of currently matching ones,
-sending to STDOUT only the new ones. In additon, to avoid loosing messages it will reset the previously matched number
-upon log file rotation (i.e. new log file is in use). But to be aware of that rotation it will aslo need to keep track
-of the last log file used to find matching messages.
+execution and decide if there are new ones by comparing that number with the number of currently matching messages,
+sending to STDOUT only the new. In additon, to avoid loosing messages it will reset the previously matched number upon
+log file rotation (i.e. new log file is in use). But to be aware of that rotation it will aslo need to keep track of the
+last log file used to find matching messages.
 
 Workflow
 --------
@@ -31,10 +31,10 @@ listing the contents of /proc/$PID/fd. By doing this, we avoid using dates and t
     because file is empty or does not exists, go to step 07. Otherwise finishing with errors;
 04. Continue by counting the current number matches found in previous log file. If this is not possible, throw a warning
     explaining that some errors might be lost from previous log rotation and continue w/step 07;
-05. Compare the current number of errors in previous log file w/the previous number from step 03. If the difference "d"
-    is >0 then display the last "d" error messages from that file or finish w/errors if that's not possible;
-06. Update the last number of matches found in previous execution in file adding previous "d" to its contained number;
-07. Find the PID of PostgreSQL's Logging Collector. If it is not running finish w/errors;
+05. Compare the current number of errors "C" in previous log file w/the previous number "P" from step 03. If C - P > 0,
+    display all current error messages, ignoring the first "P" ones (new ones only).
+06. Update the last number of matches found in previous execution in file adding "C - P" to its contained number;
+07. Find the PID of PostgreSQL's Logging Collector. If it is not possible to find a unique ID, finish w/errors;
 08. Get the current log filename used by Logging Collector. If it is not possible, finish w/errors;
 09. Compare the currently used log file w/that read in step 02. If it is the same finish (we have already processed it);
 10. Now that Logging Collector is using a new log file since our previous execution, create/update last file log
@@ -43,18 +43,20 @@ listing the contents of /proc/$PID/fd. By doing this, we avoid using dates and t
 12. Display last previously counted matching lines from new log file, finishing w/errors if that fails;
 13. Update the last number of matches found in previous execution in file with the number found in 10.
 
-Flow repeated tasks:
+Flow remarkable tasks:
 * Display messages to STODUT;
 * Display error messages to STDERR;
 * Read first line from file, given its path;
 * Update first line in file, given its path and line content;
 * Count all matching lines from file given a pattern and its path;
-* Display last N matching lines from file given N, a pattern and its path;
+* Display last matching lines from file, ignoring the first N ones; given N, a pattern and its path;
+* Find the log file used by PostgreSQL Logging Collector.
 
 Global/config. parameters:
 * PostgreSQL system user;
 * Logging Collector process name;
 * PostgreSQL logs directory;
+* PostgreSQL Pidfile path (previously defined in postgresql.conf);
 * Last log filename used by Logging Collector log file path;
 * Last number of matching messages found in last log file used by Logging Collector log file path;
 * Pattern string for log file lines to match with;

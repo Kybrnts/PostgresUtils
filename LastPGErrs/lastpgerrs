@@ -9,18 +9,16 @@
 #: Options     : N/A
 ##
 ## -- Required for execution -------------------------------------------------------------------------------------------
-type grep >/dev/null || exit 1
-type date >/dev/null || exit 1
-type tail >/dev/null || exit 1
-type lsof >/dev/null || exit 1
+type awk >/dev/null || exit 1
+type ps >/dev/null || exit 1
+type fuser >/dev/null || exit 1
 ##
-## -- Globals ----------------------------------------------------------------------------------------------------------
-##
-## -- Globals ----------------------------------------------------------------------------------------------------------
+## -- Globals -----------------------------------------------------------------------------------------------------------
 PGUSER=postgres                                          ## PostgreSQL's system user
 PGVERS=9.5                                               ## PostgreSQL version (try to be version agnostic)
 PGDATA=/var/lib/pgsql/$PGVERS/data                       ## PostgreSQL Databases container
 PGLOGS="$PGDATA/pg_log"                                  ## PostgreSQL log files container
+PGPIDF=/var/run/postgresql/pgsql.pid                     ## PostgreSQL external pidfile
 _CNF_MATCHES="FATAL|ERROR"                               ## Error patterns to match in log files
 _CNF_LSTLOGF="/home/monitor/lstpglog.log"                ## Last error count from log file
 _CNF_LSTCNTF="/home/monitor/lstpgcount.log"              ## Last used log file
@@ -37,59 +35,111 @@ errmsg() { #@ DESCRIPTION: Print messages to STDERR prefixed by an error stamp
     #@ USAGE: stderr [ MSG ... ]
     stdmsg ${1+"Error! $@"} >&2
 }
-valerc() { #@ DESCRIPTION: Checks if $1 contains a valid error count
-           #@ USAGE: stderr [ MSG ... ]
-    case $1 in
-        "") return 1 ;;
-        *[!0-9]*) return 2 ;;
-    esac
+closeIFD() { #@ DESCRIPTION: Closes a FD. It Won't fail if FD is already disposed.
+             #@ USAGE: closeFD FD
+    eval "exec $1<&-"
 }
-_RDLNF=
-rdLnF() { #@ DESCRIPTION: Reads single line from $2 file in $1 name. At least one line is expected from file, where an
-          #@              an exit status of 0 will be returned to calling env.
-          #@ USAGE: readLnF NAME [ MSG .. ]
-    ## Try to read one line of text into global
-    if ! read _RDLNF <"$2"; then ## If we failed to do so
-        if [ ! -e "$2" ]; then   ## Is so is it because the file does not exist?
-            return 1
-        elif [ ! -r "$2" ]; then ## Or may be because file is not readable?
-            return 2
-        elif [ ! -s "$2" ]; then ## Or because file does not have a single line (read returns >0 when EOF is reached)
-            return 3
-        else                     ## This is unexpected
-            return 4
-        fi
-    fi
-    ## Assign global's value to referenced variable
-    eval "$1=\"\$_RDLNF\"" ## /!\ - $1 must be a valid shell name /!\
+_FFLNE=
+getFFLne() { #@ DESCRIPTION: Reads 1st line of file specifided by $2 path into $1 name.
+             #@ USAGE: getFFLne NAME PATH
+    read _FFLNE <"$2"
+    case $? in
+        1) [ "X$_FFLNE" = "X" ] && return 1 ;; ## EOF reached before any EOL. If nothing was read, finish w/erros
+        [!0]*) return 2 ;;                     ## Something went wrong
+    esac
+    eval "$1=\"\$_FFLNE\"" ## Assign global's value to referenced name  /!\ - $1 must be a valid shell name /!\
+}
+setFFLne() { #@ DESCRIPTION: Updates $1 file's first line with $2 string
+             #@ USAGE: setFFLne PATH '[ STRING ]'
+    stdmsg ${2+"$2"} >"$1" || return 1
 }
 ##
 ## -- Core functions ---------------------------------------------------------------------------------------------------
-_LCOUNT=
-getLcount() { #@ DESCRIPTION:
-              #@ USAGE:
-    
+_CHPIDS=
+_CHPIDLST=
+getChPidLst() { #@ DESCRIPTION: Gathers all $3-ID process child ids belonging to user whose name is $4 and that match $5
+                #@              pattern in their command line, in a colon separated list. Then writes that list and the
+                #@              number of gathered pids to $1 and $2 names respectively.
+                #@ USAGE: getUsrPrcsPIDs NAME NAME PPID USER [ PATTERN ]
+    _CHPIDLST=$(ps -eo "ppid ruser user pid args" | awk \
+'BEGIN{ c=0; pidlist="" }
+$1 == "'$3'" && ($2 == "'$4'" || $3 == "'$4'"){ # Filter 
+    $1=$2=$3=""
+    if($0 ~ /'"${5:-.*}"'/) {
+        if(!c) pidlist=$4;
+        else pidlist=pidlist":"$4;
+        c++
+    }
 }
-
+END{ print c"::"pidlist }
+') || return 2                         ## Something nasty happened with awk or ps
+    _CHPIDS=${_CHPIDLST%%::*}          ## Extract the number of elements from list prefix
+    _CHPIDLST=${_CHPIDLST#$_CHPIDS::}  ## Remove list's prefix
+    eval "$1=\"\$_CHPIDS\""            ## Assign global's value to referenced names /!\ - $1 must be a valid names /!\
+    eval "$2=\"\$_CHPIDLST\""
+    [ "$_CHPIDS" -gt 0 ] || return 1   ## Reurn 1 when no matching process is found
+}
+_MLNUM=
+getMLnum() { #@ DESCRIPTION: Counts all matching lines from $2 file given the $3 pattern, storing number in $1 name.
+             #@ USAGE: getMLnum NAME PATH [ PATTERN ]
+    ## Count each matching line using awk w/inner variable, if awk fails let the calling environment know
+    _MLNUM=$(awk 'BEGIN{ c=0 } /'"${3:-.*}"'/{ c++ } END{ print c }' "$2") || return 2
+    ## Assign global's value to referenced name  /!\ - $1 must be a valid shell name /!\
+    eval "$1=\"\$_MLNUM\""
+    ## Also report to the calling environment when no matching lines are found 
+    [ $_MLNUM -gt 0 ] || return 1
+}
+_MLNAFT=
+dspMLnAft() { #@ DESCRIPTION: Displays $3 pattern-matching lines from $2 file, after (ignoring) first $4 matching ones.
+              #@              Total number of read lines is saved into $1 name.
+              #@ USAGE: dspLMLnsIf NAME PATH [ PATTERN [ NUM ] ]
+    ## Proces $1 file, saving single awk's script STDOUT line to global, within subscript
+    { _MLNAFT=$(awk \
+'BEGIN{ c=0 }                     # Initialize line counter
+/'"${3:-.*}"'/{                   # If line matches pattern..
+    c++;                          # * Increase counter
+    if(c > '${4:-0}') print "E"$0 # * If counter above ignored num, print line w/"E" prefix
+}
+END{ print "S"c - '${4:-0}' }     # Finally print total non-ignored lines number w/"S" prefix
+' "$2" | while read -r line; do           ## Separate lines from STDIN using prefix untill EOF
+            case $line in                 ## Remove prefix and send lines to..
+                S*) stdmsg "${line#?}" ;; ## * STDOUT if S-prefixed so that only total maches is saved into global
+                E*) errmsg "${line#?}" ;; ## * STDERR if E-prefixed so matching lines can be displayed
+            esac
+         done); } 2>&1 || return 2  ## Redirect STDERR messages to STDOUT where they belong. Return 2 if split fails
+    eval "$1=\"\$_MLNAFT\""         ## Assign global's value to referenced names /!\ - $1 must be a valid names /!\
+    [ $_MLNAFT -gt 0 ] || return 1  ## Return 1 when no matching lines where printed
+}
 ##
 ## -- MAIN -------------------------------------------------------------------------------------------------------------
 main() {
     set --
     ##
-    ## 01. Make sure that current user is postgres, otherwise finish w/errors;
-
+    ## 01.
     ##
-    ## 02. Read the last log filename used by the Logging Collector from file. If fails, finish w/errors;
-
+    ## 02.
     ##
-    ## 03. Read last number of matches found during previous execution from file, finish w/errors if fails;
-
+    ## 03.
     ##
-    ## 04. Count current number of matches in previous log file
-
+    ## 04.
     ##
+    ## 05.
     ##
-    
+    ## 06.
+    ##
+    ## 07.
+    ##
+    ## 08.
+    ##
+    ## 09.
+    ##
+    ## 10.
+    ##
+    ## 11.
+    ##
+    ## 12.
+    ##
+    ## 13.    
  }
 ##
 ## -- RUN! -------------------------------------------------------------------------------------------------------------

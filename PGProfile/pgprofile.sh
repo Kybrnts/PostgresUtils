@@ -216,7 +216,7 @@ then
                 return 0 ;;
             1)
                 stdmsg  "Postgresql-${PGVERS} is NOT running."
-                return 0;;
+                return 0 ;;
             *)
                 errmsg "Failed during process search."
                 stdmsg "Please search for the process manualy."
