@@ -20,16 +20,21 @@ last log file used to find matching messages.
 
 Workflow
 --------
-Below Workflow makes several assumptions, which include the capability of finding which files within a directory are in
-use by a process given its ID. This is usually achieved by a wise use of either the lsof or fuser acilities, or by
-listing the contents of /proc/$PID/fd. By doing this, we avoid using dates and timestamps for the search.
+Below Workflow makes several assumptions including:
+* The capability of finding which files within a directory are in use by a process given its ID. This is usually
+  achieved by a wise use of either the lsof or fuser acilities, or by listing the contents of /proc/$PID/fd. By doing
+  this, we avoid using dates and timestamps for the search.
+* The existence of a Pidfile. That allows to point to a single running instance of PostgreSQL in order to find its
+  child Logging Collector process to do the follow up. The use of a pidfile is supported by postgresql.conf
+  "external_pid_file" parameter, and we will assume that a single instance of PostgreSQL will be followed up through its
+  child Collector by a given instance of this script.
 
 01. Make sure that current user is postgres, otherwise finish w/errors;
 02. Then read the last log filename used by the Logging Collector from file. If this fails because file is empty or does
     not exists, then go to step 07. Otherwise finish w/errors;
 03. Also read the last number of matching lines found during previous execution from file, if this is not possible
     because file is empty or does not exists, go to step 07. Otherwise finishing with errors;
-04. Continue by counting the current number matches found in previous log file. If this is not possible, throw a warning
+04. Now count the current number of matches found in previously used log file. If this is not possible, throw a warning
     explaining that some errors might be lost from previous log rotation and continue w/step 07;
 05. Compare the current number of errors "C" in previous log file w/the previous number "P" from step 03. If C - P > 0,
     display all current error messages, ignoring the first "P" ones (new ones only).
@@ -70,7 +75,7 @@ Installation
 
 Authors
 -------
-Written by :  Kybernetes <correodelkybernetes@gmail.com>;
-Reviewed by:  shd128 (https://github.com/shd128).
+Written by Kybernetes <correodelkybernetes@gmail.com>
+Reviewed by shd128 (https://github.com/shd128)
          
 
