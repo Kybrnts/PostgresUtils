@@ -13,14 +13,18 @@ type awk >/dev/null || exit 1
 type ps >/dev/null || exit 1
 type fuser >/dev/null || exit 1
 type file >/dev/null || exit 1
+type sudo >/dev/null || exit 1
 ##
 ## -- Globals -----------------------------------------------------------------------------------------------------------
 ##
 ## Declare the following useful symbols:
-readonly _NULL                              ## The unset value (null ptr), not to be confused w/the null string;
-[ "$_SPC" ] || readonly _SPC="${IFS%??}"    ## Space (readonly uses a word for assignment's LHS);
-[ "$_EOL" ] || readonly _EOL="${IFS#??}"    ## End of line;
-[ "$_TAB" ] || { _TAB=${IFS%?}; readonly _TAB="${_TAB#?}"; } ## And the tab.
+readonly _NULL                                  ## The unset value (null ptr), not to be confused w/the null string;
+IFS=                                            ## Clear the IFS in case they a messy one has been exported;
+readonly _SPC=" "                               ## Space (readonly uses a word for assignment's LHS);
+readonly _TAB="$(printf "\t")"                  ## Tab;
+_EOL="$(printf "\n:")"; readonly _EOL=${_EOL%?} ## En of line (newline);
+IFS=$_SPC$_TAB$_EOL                             ## Now reset the IFS as expected
+_RPLY=                                          ## The global reply from read command
 ##
 ## Configuration parameters:
 PGUSER=postgres                                          ## PostgreSQL's system user
@@ -93,30 +97,47 @@ END{ print c"::"pidlist }                                # Finally print list pr
     [ "$_UPIDCHS" -gt 0 ] || return 1    ## Return 1 when no matching process is found
 }
 _BYPIDDIRTXFS=   ## Number of elements of below string list
-_BYPIDDIRTXFLST= ## List of text files inside dir opened by PID
-getByPIDDirTxFLst() { #@ DESCRIPTION: Gathers all txt files used by process whose ID is $3, contained right below $4 dir
-                      #@              in a '\n' separated string list, in $2 name and storing the number of items in $1.
-                      #@ USAGE: getByPIDDirFLst NAME NAME PID PATH
-    ## Process all files within given dir, use \n as IFS to avoid word split on filenames w/spaces
-    _BYPIDDIRTXFLST=$(IFS=$_EOL printf "%s\n" "$4"/* | {
-            num=0 path= tpe= pids= ## A counter, current file path, type and processes IDs who are using it
-            while read -r path; do                                               ## For each file..
-                [ -f "$path" ] && tpe=$(file -i "$path" 2>/dev/null) || continue ## Skip if not a regular one
-                if sbstr "text/plain" "$tpe"; then                               ## Skip if not a text one
-                    pids=$(fuser -f "$path" 2>/dev/null) || continue             ## Get using PIDS, or skip if none
-                    if sbstr $3 "$pids"; then                                    ## Skip if given PID not in using pids
-                        stdmsg "$path"                                           ## If not skipped, send path to global
-                        num=$((num + 1))                                         ## Increase counter
-                    fi
+_BYPIDDIRTXFLST= ## List of EOL text files inside dir opened by PID
+_getByPIDDirTxFLst() { #@ DESCRIPTION: Gathers all txt files used by $1 process ID contained right below $2 dir in a \n
+                       #@ separated list, storing it in _BYPIDDIRTXFLST global, and its # of elements in  _BYPIDDIRTXFS.
+                       #@ USAGE: getByPIDDirFLst PID PATH    
+    ## Local variables (If local is used, it should appear as the first statement of a function)
+    local prply fst tpe ferr pids         ## Previous reply, a flag, file type, another flag, PIDs of procs using file
+    _BYPIDDIRTXFS=0 _BYPIDDIRTXFLST=      ## Initialize global list and elements counter
+    fst=true prply= tpe= ferr=false pids= ## Int fist line as true, and warnings flag false. Clear local strings
+    # Read all replies from below "here string" always keeping last reply in memory
+    while IFS= read -r _RPLY; do          ## For each reply, store current reply and..
+        if $fst; then                     ## If this is the first reply..
+            fst=false                     ## * Following replies won't be, so switch flag to false 
+        elif [ -f "$prply" ]; then        ## Else process reply (start on 2nd). If next reply not regular file, skip it
+            if ! tpe=$(file -i "$prply" 2>/dev/null); then ## Get regular file's type into var, if not possible
+                ferr=true                                  ## * Set file errors flag to true, and skip reply
+            elif sbstr "text/plain" "$tpe"; then           ## If regular file is not a nonempty text file, skip reply
+                if ! pids=$(fuser -f "$prply" 2>&1); then  ## Get pids of procs using file, if not possible..
+                    [ "X$pids" = X ] || ferr=true          ## * If no error messages, assume fuser error else skip reply
+                elif sbstr $1 "${pids#*: }"; then          ## If found pids do not contain argument pid, skip reply
+                    _BYPIDDIRTXFLST=${_BYPIDDIRTXFLST:+"$_BYPIDDIRTXFLST$_EOL"}"$prply" ## Append reply to global list
+                    _BYPIDDIRTXFS=$((_BYPIDDIRTXFS + 1))                                ## Increase list elements
                 fi
-            done                        
-            stdmsg "$num"; }) || return 2               ## Put counter at end of global list. Also return 2 on pipe fail
-    _BYPIDDIRTXFS=${_BYPIDDIRTXFLST##*"$_EOL"}          ## Get counter from STDOUT's last line (i.e. element of list)
-    _BYPIDDIRTXFLST=${_BYPIDDIRTXFLST%"$_BYPIDDIRTXFS"} ## Remove list's last element (it is its dimension)
-    _BYPIDDIRTXFLST=${_BYPIDDIRTXFLST%"$_EOL"}          ## 
-    eval "$1=\"\$_BYPIDDIRTXFS\""                       ## Write list num. of elements to referenced name. MUST BE VALID
-    eval "$2=\"\$_BYPIDDIRTXFLST\""                     ## Write list to referenced name. MUST BE A VALID NAME!!!
-    [ $_BYPIDDIRTXFS -gt 0 ] || return 1                ## Return 1 when no files open in provided dir by provided PID
+            fi
+        fi
+        prply=$_RPLY ## Update previous reply w/current reply
+    done <<EOF
+$(printf "%s\n" "$2"/* 2>/dev/null; printf "%d" $?)
+EOF
+    ## Above command assures to have at least one reply containing an exit status.
+    ## In addition, the here document syntax forces input to end en an empty line.
+    ## As consequence, last previous replay, holds the exit status of printf.
+    [ "$prply" = 0 ]  || return 3        ## If previous reply sint 0, then printf failed :-O !!! return 3
+    $ferr && return 2                    ## If there wre errors during output processing return 2
+    [ $_BYPIDDIRTXFS -gt 0 ] || return 1 ## Return 1 when no files found for $1 pid
+}
+getByPIDDirTxFLst() { #@ DESCRIPTION:
+                      #@ USAGE:
+    _getByPIDDirTxFLst ${3+"$3"} ${4+"$4"} || return $?
+    # Assign globals value to referenced names  /!\ - $1 and $2 must be a valid shell names /!\
+    eval "$1=\"\$_BYPIDDIRTXFS\""
+    eval "$2=\"\$_BYPIDDIRTXFLST\""
 }
 _MLNUM=
 getMLnum() { #@ DESCRIPTION: Counts all matching lines from $2 file given the $3 pattern, storing number in $1 name.
@@ -126,36 +147,52 @@ getMLnum() { #@ DESCRIPTION: Counts all matching lines from $2 file given the $3
     ## Assign global's value to referenced name  /!\ - $1 must be a valid shell name /!\
     eval "$1=\"\$_MLNUM\""
     ## Also report to the calling environment when no matching lines are found 
-    [ $_MLNUM -gt 0 ] || return 1
+    [ "$_MLNUM" = 0 ] || return 1
 }
 _MLNAFT=
 dspMLnAft() { #@ DESCRIPTION: Displays $3 pattern-matching lines from $2 file, after (ignoring) first $4 matching ones.
-              #@              Total number of read lines is saved into $1 name.
+              #@              Total number of displayed lines is saved into $1 name.
               #@ USAGE: dspLMLnsIf NAME PATH [ PATTERN [ NUM ] ]
-    ## Proces $1 file, saving single awk's script STDOUT line to global
-    { _MLNAFT=$(awk \
-'BEGIN{ c=0 }                     # Initialize line counter
-/'"${3:-.*}"'/{                   # If line matches pattern..
-    c++;                          # * Increase counter
-    if(c > '${4:-0}') print "E"$0 # * If counter above ignored num, print line w/"E" prefix
+    # Proces $1 file, splitting all ines to STDOUT or ERR, saving awk's script STDOUT lines to global
+    { _MLNAFT=$(while read -r _RPLY; do                ## Send each line to STDOUT or ERR according to prefix
+                    case $_RPLY in                     ## Remove prefix and send lines to STD..
+                        S*) stdmsg "${_RPLY#?}" ;;     ## * OUT if S-prfx so matches count and awk's status go to global
+                        E*) stdmsg "${_RPLY#?}" >&2 ;; ## * ERR if E-prefixed so matching lines can be displayed
+                    esac
+                done <<EOF
+$(awk \
+'BEGIN{ c=0 }                     ## Initialize line counter
+/'"${3:-.*}"'/{                   ## If line matches pattern..
+    c++;                          ## * Increase counter
+    if(c > '${4:-0}') print "E"$0 ## * If counter above ignored num, print line w/"E" prefix
 }
 END{ print "S"c - '${4:-0}' }     # Finally print total non-ignored lines number w/"S" prefix
-' "$2" |
-        while read -r line; do            ## Split STDIN lines, sending them to STDOUT or ERR using prefix until EOF
-            case $line in                 ## Remove prefix and send lines to..
-                S*) stdmsg "${line#?}" ;; ## * STDOUT if S-prefixed so that only total matches is saved into global
-                E*) errmsg "${line#?}" ;; ## * STDERR if E-prefixed so matching lines can be displayed
-            esac
-        done); } 2>&1 || return 2  ## Redirect STDERR messages to STDOUT where they belong. Return 2 if split fails
-    eval "$1=\"\$_MLNAFT\""        ## Assign global's value to referenced names /!\ - $1 must be a valid names /!\
-    [ $_MLNAFT -gt 0 ] || return 1 ## Return 1 when no matching lines where printed
+' "$2"; printf "S%d" $?)
+EOF
+             ); } >&1                                  ## Redirect STDERR messages to STDOUT where they belong
+    # Now validate results according to global's content
+    if ! sbstr "$_EOL" "$_MLNAFT"; then      ## If returned global string do not consist of two lines..
+        eval "$1=0"                          ## * Assume awk failed regardless of its status, and no lines displayed
+	return 3                             ## * Let the calling environment know about failure
+    fi                                       ## From now onwards we have two lines in global
+    eval "$1=\"\${_MLNAFT%%$_EOL*}\""        ## Assign first line's content (displayed lines number) to global
+    [ "${_MLNAFT##*$_EOL}" = 0 ] || return 2 ## If second lines's content (awk status) is not zero return 2
+    [ "${_MLNAFT%%$_EOL*}" = 0 ] && return 1 ## If awk status is zero but no lines matched, return 1
+}
+excAs() { 
+    exec sudo -u "${1:-$USER}" "${2:-:}"
 }
 ##
 ## -- MAIN -------------------------------------------------------------------------------------------------------------
 main() {
     set --
     ##
-    ## Make sure that current user is postgres, otherwise finish w/errors (is this really necessary?)
+    ## Make sure that current user is postgres
+    if [ "$USER" != "$PGUSER" ]; then ## Is current user postgres?
+        execAs "$PGUSER" "$0"         ## Then check 
+    else
+        
+    fi
     ##
     ## Read last log filename used by Logging Collector from file
     ##

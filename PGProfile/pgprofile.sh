@@ -1,7 +1,7 @@
 #: Title       : Pgprofile.sh
-#: Date        : 2017-08-24
+#: Date        : 2017-10-05
 #: Author      : "Kybernetes" <correodelkybernetes@gmail.com>
-#: Version     : 1.0.0
+#: Version     : 1.2.0
 #: Description : Dash script file
 #:             : Postgres user's shell startup file providing version agnostic control over PostgreSQL service for the
 #:             : postgres user. Control is provided though pg_service() which accepts usual init.d parameters.
@@ -18,6 +18,7 @@ PGVERS=9.5                         ## PostgreSQL version (try to be version agno
 PGDATA=/var/lib/pgsql/$PGVERS/data ## Database container
 PGBIN=/usr/pgsql-$PGVERS/bin       ## PostgreSQL ported binaries container
 ##
+# Provide init-like commands
 ## Check requirements, if one is missing do not load any function/variable:
 ## * There must be a terminal allocated for tools to be loaded to environment (only for interactive remote shells);
 ## * User mut be postgres (provide utilities only for that user);
@@ -260,4 +261,123 @@ then
     export pg_service
 else ## If requirements are not meet, remove globals and finish
     unset PGDATA PGVERS PGBIN
+fi
+##
+# Provide Postgres archive log cleanup tool
+## Check requirements, if one is missing do not load any function/variable:
+## * There must be a terminal allocated for tools to be loaded to environment (only for interactive remote shells);
+## * User mut be postgres (provide utilities only for that user);
+## * A valid PostgreSQL installation must be present (check for $PGDATA, $PGBIN/*);
+## * Also validate access to needed binaries
+if [ -t 0 ] &&
+   [ "$USER" = postgres ] &&
+   type pgrep >/dev/null 2>&1 &&
+   type sleep >/dev/null 2>&1 &&
+   [ -d "$PGDATA" -a -r "$PGDATA" -a -x "$PGDATA" ] &&
+   type file >/dev/null &&
+   type fuser >/dev/null &&
+   type gzip >/dev/null &&
+   type ps >/dev/null &&
+   type rm >/dev/null &&
+   type tee >/dev/null
+then
+    zparch() { #@ DESCRIPTION: Zips all postgres archive files within $1 directory, printing actions to $2 logfile.
+               #@ USAGE: zparch [ PGARCHIVEDIR [ LOGPATH ] ]
+        # Local variables (If local is used, it should appear as the first statement of a function)
+        local pidf jbc pfmt path tpe pids ignrd lgs zppd kpt totl errs
+        # Startup
+        set -- "${1:-$PGDATA/archive}" "${2:-/tmp/zparch.log}" ## Set default vaules for arguments
+        pidf=/tmp/zparch.pid                                   ## Set defalt path for pidfile
+        if [ -e "$pidf" ]; then                                ## Check for previous currently running instance
+            printf "%s\n" "Error! Another instance of zparch is already running" >&2
+            return 2                                           ## Finish if previous instance is found
+        fi
+        if ! printf "%d\n" $$ >"$pidf"; then                    ## Send current pid to pidfile, creating it
+            printf "%s\n" "Error! Failed to create pidfile" >&2 ## Or else finish w/errors
+            return 2
+        fi
+        # Group actions to call at 2 exit points of workflow: Trap and normal exit
+        finish() {
+            # Set print format for summary
+            pfmt="                    \nSummary                    \n------------------\n"
+            pfmt="$pfmt%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n\n"
+            # Print summary
+            printf "$pfmt"\
+                   Nonlogs $nolgs logs $lgs Zipped $zppd\
+                   Kept $kpt Total $totl Errors $errs | tee -a "${1:-/dev/null}"
+            # Do the clean-up
+            exec 3>&-                                                ## Close file descriptor
+            $jbc && set -m                                           ## Switch job control state back
+            rm -f "$pidf"                                            ## Remove pidfile
+            [ -e "$pidf" ] && printf "%s\n" "Failed to remove $pidf" ## Check removal
+            unset -f finish                                          ## Don't allow finish() outside zparch()
+        }
+        # Start listening to signals, finishing on Ctrl+C, kill -15 and -9
+        trap 'printf "    %s\n" "Stopped by signal"; finish '"$2"'; return 3' INT TERM KILL
+        # Turn off job control if enabled. This is needed to avoid annoying "Started" and "Done" terminal messages
+        case $- in                   ## If current shell options..
+            *m*) set +m; jbc=true ;; ## Include "-m" for job control, disable it and remember action w/flag
+            *) jbc=false ;;          ## Else set flag to false
+        esac
+        # Initalize locals
+        pfmt="%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n%8s: %-10d\n%8s: %-10d\033[4A\033[20D" ## Printf format for the loop
+        nolgs=0 lgs=0 zppd=0 kpt=0 totl=0 errs=0                                         ## Counters, zipped, kept, etc
+        # Additional initializations
+        if ! ( exec 3>"$2" ); then                                ## Test if possible to open logile in background
+            printf "%s\n" "Error! Failed to open logfile $2" >&2  ## If not possible, finish w/errors.
+            finish                                                ## Due to posix restrictions on "exec" if exec fails
+            return 3                                              ## it's impossible to prevent script exit, hence
+        fi                                                        ## we check first, and then try to open. however this
+        exec 3>"$2"                                               ## this is sitll unsafe.
+        { sleep 2 & } 2>/dev/null                                 ## Start background dummy to later check elapsed time
+        # Main loop, for each read reply (path to archive file)..
+        while IFS= read -r path; do         ## Use empty IFS to avoid word splitting on lines
+            if tpe=$(file -i "$path"); then ## If cannot retrieve file type, skip file
+                case $tpe in                    ## Check on retreived mime type
+                    *application/octet-stream*) ## If not as expected (postgres archive file), skip file
+                        if pids=$(fuser -f "$path" 2>&1); then ## If got pids of procs using file..
+                            kpt=$((kpt + 1))                   ## * File will be left alone, so increase kept counter
+                        elif [ "X$pids" != X ]; then           ## If failed to get pids, and found fuser errors
+                            printf "%s\n" "Error! In-use test file failed for $path" >&3 ## * Print an error message
+                            errs=$((errs + 1))                                           ## * Increase errors count
+                            kpt=$((kpt + 1))                                             ## * Keep file, so count it
+                        else                    ## If failed to get pids w/no fuser erros, assume file is not being used
+                            printf "%s" "Zipping " >&3                   ## So, process unused archive file
+                            if ! gzip -v "$path" >&3 2>&1; then          ## Try to zip file, if fail
+                                printf "%s\n" "Error! Failed to zip" >&3 ## * Print an error message
+                                errs=$((errs + 1))                       ## * Increase errors count
+                                kpt=$((kpt + 1))                         ## * Keep file, so count it
+                            elif ! rm -vf "$path" >&3 2>&1; then            ## If zipped, try to remove original if avail
+                                printf "%s\n" "Error! Failed to remove" >&3 ## Print an error on removal failure
+                                rm -vf "$path".gz >&3 2>&1                  ## As original archive is kept, remove zipped
+                                errs=$((errs + 1))                          ## Increase errors count
+                                kpt=$((kpt + 1))                            ## Also kpet files count
+                            else                   ## Now that we are sure that archive was zipped and removed,
+                                zppd=$((zppd + 1)) ## Increase the zipped count
+                            fi
+                        fi                         ## We are sure that current path ponts to archive file
+                        lgs=$((lgs + 1)) ;;        ## increase archive logs counter
+                    *)                          ## Current path do not point to archive file so
+                        nolgs=$((nolgs + 1)) ;; ## inrease the nonlogs counter
+                esac
+            else                                                    ## If failed to retrieve file type
+                printf "%s\n" "Error! Failed to get file type" >&3  ## Print an error messae
+                errs=$((errs + 1))                                  ## Take this as an error
+                kpt=$((kpt + 1))                                    ## File is skipped, hence kept
+            fi
+            totl=$((totl + 1))                                        ## Increase total files counter
+            if ! ps -o pid -p $! >/dev/null 2>/dev/null; then         ## Refresh stdout only if background dummie died
+                printf "$pfmt" Nonlogs $nolgs logs $lgs Zipped $zppd\
+                       Kept $kpt Errors $errs
+                { sleep 2 & } 2>/dev/null                             ## Start new background dummie for next loop
+            fi
+        done <<EOF
+$(printf "%s\n" "$1"/*)
+EOF
+# Get list of $1 contained files using pathname espansion
+# Fetch list to a here document to be read by the while loop
+        # Finish execution propperly
+        finish "$2"                  ## Use $2 log file to output summary
+        [ $errs -eq 0 ] || return 1  ## If there were some errors, let the calling environment know
+    }
 fi
